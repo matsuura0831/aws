@@ -1,0 +1,18 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Deny",
+      "Action": [
+        "ec2:AttachInternetGateway",
+        "ec2:CreateInternetGateway",
+        "ec2:AllocateAddress",
+        "ec2:AssociateAddress",
+        "ec2:CreateNatGateway"
+      ],
+      "Resource": [
+        "*"
+      ]
+    }
+  ]
+}

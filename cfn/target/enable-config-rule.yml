@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Configure AWS Config rules to check that your S3 buckets do not allow public access
+
+Parameters:
+  ManagedResourcePrefix:
+    Type: 'String'
+    Description: 'Prefix for the managed resources'
+    Default: "aws-organizations"
+  SecurityAccountId:
+    Type: 'String'
+    Description: AWS Account Id of the Security account.
+  MaximumExecutionFrequency:
+    Type: String
+    AllowedValues:
+      - "1"
+      - "3"
+      - "6"
+      - "12"
+      - "24"
+    Default: "24"
+    Description: The frequency that you want AWS Config to run evaluations for the rule.
+
+Mappings:
+  Frequency:
+    "1":
+      Value: "One_Hour"
+    "3":
+      Value: "Three_Hours"
+    "6":
+      Value: "Six_Hours"
+    "12":
+      Value: "Twelve_Hours"
+    "24":
+      Value: "TwentyFour_Hours"
+
+Resources:
+  CheckForS3PublicWrite:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${ManagedResourcePrefix}-AUDIT_S3_BUCKET_PUBLIC_WRITE_PROHIBITED"
+      Description: Checks that your S3 buckets do not allow public write access. If an S3 bucket policy or bucket ACL allows public write access, the bucket is noncompliant.
+      Source:
+        Owner: AWS
+        SourceIdentifier: S3_BUCKET_PUBLIC_WRITE_PROHIBITED
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::S3::Bucket
+          
+  CheckForS3PublicRead:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${ManagedResourcePrefix}-AUDIT_S3_BUCKET_PUBLIC_READ_PROHIBITED"
+      Description: Checks that your S3 buckets do not allow public read access. If an S3 bucket policy or bucket ACL allows public read access, the bucket is noncompliant.
+      Source:
+        Owner: AWS
+        SourceIdentifier: S3_BUCKET_PUBLIC_READ_PROHIBITED
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::S3::Bucket
+
+  CheckForEIPAttached:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${ManagedResourcePrefix}-AUDIT_EIP_ATTACHED"
+      Description: "Checks whether all EIP addresses allocated to a VPC are attached to EC2 instances or in-use ENIs."
+      Source:
+        Owner: AWS
+        SourceIdentifier: EIP_ATTACHED
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::EIP
+
+  CheckForEBSAttached:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${ManagedResourcePrefix}-AUDIT_EC2_VOLUME_INUSE_CHECK"
+      Description: Checks whether EBS volumes are attached to EC2 instances.
+      Source:
+        Owner: AWS
+        SourceIdentifier: EC2_VOLUME_INUSE_CHECK
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::Volume
+
+  CheckForEC2RestrictedSSH:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${ManagedResourcePrefix}-AUDIT_EC2_INCOMING_SSH_DISABLED"
+      Description: Checks whether security groups that are in use disallow unrestricted incoming SSH traffic.
+      Source:
+        Owner: AWS
+        SourceIdentifier: INCOMING_SSH_DISABLED
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::SecurityGroup
+
+  CheckForRDSPublicAccess:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${ManagedResourcePrefix}-AUDIT_RDS_INSTANCE_PUBLIC_ACCESS_CHECK"
+      Description: Checks whether the Amazon Relational Database Service (RDS) instances are not publicly accessible. The rule is non-compliant if the publiclyAccessible field is true in the instance configuration item.
+      Source:
+        Owner: AWS
+        SourceIdentifier: RDS_INSTANCE_PUBLIC_ACCESS_CHECK
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::RDS::DBInstance
+
+  CheckForDefaultSGClosed:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${ManagedResourcePrefix}-AUDIT_VPC_DEFAULT_SECURITY_GROUP_CLOSED"
+      Description: Checks that the default security group of any Amazon Virtual Private Cloud (VPC) does not allow inbound or outbound traffic. The rule is non-compliant if the default security group has one or more inbound or outbound traffic.
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::SecurityGroup
+      Source:
+        Owner: AWS
+        SourceIdentifier: VPC_DEFAULT_SECURITY_GROUP_CLOSED
+
+  CheckForSGPublicAccess:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${ManagedResourcePrefix}-AUDIT_VPC_SG_OPEN_ONLY_TO_AUTHORIZED_PORTS"
+      Description: Checks whether any security groups with inbound 0.0.0.0/0 have TCP or UDP ports accessible. The rule is NON_COMPLIANT when a security group with inbound 0.0.0.0/0 has a port accessible which is not specified in the rule parameters.
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::SecurityGroup
+      Source:
+        Owner: AWS
+        SourceIdentifier: VPC_SG_OPEN_ONLY_TO_AUTHORIZED_PORTS
+
+  CheckGuardDutyEnabled:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${ManagedResourcePrefix}-AUDIT_GUARDUTY_ENABLED_CENTRALIZED"
+      Description: Checks whether GuardDuty is enabled. You can optionally verify that the results are centralized in a specific AWS Account.
+      InputParameters:
+        CentralMonitoringAccount: !Ref SecurityAccountId
+      Source:
+        Owner: AWS
+        SourceIdentifier: GUARDDUTY_ENABLED_CENTRALIZED
+      MaximumExecutionFrequency: !FindInMap [Frequency, !Ref MaximumExecutionFrequency, Value]
+
+  CheckEC2ManagedSSM:
+    Type: 'AWS::Config::ConfigRule'
+    Properties:
+      ConfigRuleName: !Sub "${ManagedResourcePrefix}-EC2_INSTANCE_MANAGED_BY_SSM"
+      Description: Checks whether the Amazon EC2 instances in your account are managed by AWS Systems Manager.
+      InputParameters: {}
+      Scope:
+        ComplianceResourceTypes:
+          - 'AWS::EC2::Instance'
+          - 'AWS::SSM::ManagedInstanceInventory'
+      Source:
+        Owner: AWS
+        SourceIdentifier: EC2_INSTANCE_MANAGED_BY_SSM
+
+#  CheckRequiredTagOnEC2:
+#    Type: 'AWS::Config::ConfigRule'
+#    Properties:
+#      ConfigRuleName: !Sub "${ManagedResourcePrefix}-EC2-REQUIRED_TAGS"
+#      Description: Checks whether your resources have the tags that you specify.
+#      InputParameters:
+#        tag1Key: Schedule
+#        tag1Value: "running,stopped,office-hours,office-hours-running,office-hours-stopped"
+#        tag2Key: PatchGroup
+#        tag2Value: "Dev"
+#      Scope:
+#        ComplianceResourceTypes:
+#          - 'AWS::EC2::Instance'
+#      Source:
+#        Owner: AWS
+#        SourceIdentifier: REQUIRED_TAGS
+

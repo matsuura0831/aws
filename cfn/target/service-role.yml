@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Configure AWS Config and SNS Notification Forward IAM Roles
+
+Parameters:
+  ManagedResourcePrefix:
+    Type: 'String'
+    Default: 'aws-organizations'
+    Description: 'Prefix for the managed resources'
+
+  SecurityTopicName:
+    Type: String
+    Default: 'aws-organizations-AggregateSecurityNotifications'
+    Description: Security Notification SNS Topic Name.
+
+  SecurityAccountId:
+    Type: 'String'
+    Description: AWS Account Id of the Security account.
+
+Resources:
+  DefaultInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ManagedResourcePrefix}-DefaultInstanceRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Policies:
+      - PolicyName: sts
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Action:
+                - "sts:AssumeRole"
+              Resource: "*"
+  DefaultInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub ${ManagedResourcePrefix}-DefaultInstanceProfile
+      Path: /
+      Roles:
+        - !Ref DefaultInstanceRole
+
+  ConfigRecorderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ManagedResourcePrefix}-ConfigRecorderRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - config.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSConfigRole
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+
+  ForwardSnsNotificationLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub ${ManagedResourcePrefix}-ForwardSnsNotificationRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'lambda.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+      - PolicyName: sns
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'sns:publish'
+            Resource: !Sub arn:aws:sns:*:${SecurityAccountId}:${SecurityTopicName}
+
+Outputs:
+  BaselineConfigRole:
+    Description: Baseline Config Role
+    Value: !GetAtt 'ConfigRecorderRole.Arn'

@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Enable SSM Patch Manager
+
+Parameters:
+  ManagedResourcePrefix:
+    Type: 'String'
+    Description: 'Prefix for the managed resources'
+    Default: "aws-organizations"
+  MaintenanceWindowTargetTag:
+    Type: 'String'
+    Description: 'Tag name of target maintenance window'
+    Default: "PatchGroup"
+
+Resources:
+  PatchBaselineForREHL:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      ApprovalRules:
+        PatchRules:
+          - ApproveAfterDays: 7
+            PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
+                    - Security
+                - Key: SEVERITY
+                  Values:
+                    - Important
+                    - Critical
+          - ApproveAfterDays: 7
+            PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
+                    - Bugfix
+      Description: 'Security and bugfix update created by cfn'
+      Name: 'REHLPatchBaseline' # can't startswith 'AWS'
+      OperatingSystem: REDHAT_ENTERPRISE_LINUX
+      PatchGroups:
+        - "Dev"
+
+  PatchBaselineForUbuntu:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      ApprovalRules:
+        PatchRules:
+          - ApproveAfterDays: 7
+            PatchFilterGroup:
+              PatchFilters:
+                - Key: PRIORITY
+                  Values:
+                    - Required
+                    - Important
+                    - Standard
+                    - Optional
+                    - Extra
+      Description: 'Security and bugfix update created by cfn'
+      Name: 'UbuntuPatchBaseline' # can't startswith 'AWS'
+      OperatingSystem: UBUNTU
+      PatchGroups:
+        - "Dev"
+
+  PatchBaselineForAmazonLinux2:
+    Type: AWS::SSM::PatchBaseline
+    Properties:
+      ApprovalRules:
+        PatchRules:
+          - ApproveAfterDays: 7
+            PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
+                    - Security
+                - Key: SEVERITY
+                  Values:
+                    - Important
+                    - Critical
+          - ApproveAfterDays: 7
+            PatchFilterGroup:
+              PatchFilters:
+                - Key: CLASSIFICATION
+                  Values:
+                    - Bugfix
+      Description: 'Security and bugfix update created by cfn'
+      Name: 'AmazonLinux2PatchBaseline' # can't startswith 'AWS'
+      OperatingSystem: AMAZON_LINUX_2
+      PatchGroups:
+        - "Dev"
+
+  MaintenanceWindow:
+    Type: AWS::SSM::MaintenanceWindow
+    Properties:
+      AllowUnassociatedTargets: true
+      Cutoff: 0 # h
+      Schedule: "cron(0 18 ? * SAT *)" # JST: SUN-03:00
+      Duration: 1 # h
+      Name: !Sub "${ManagedResourcePrefix}-MaintenanceWindow-dev"
+
+  MaintenanceWindowTarget:
+    Type: AWS::SSM::MaintenanceWindowTarget
+    Properties:
+      Name: !Sub "${ManagedResourcePrefix}-MaintenanceWindowTarget"
+      WindowId: !Ref MaintenanceWindow
+      ResourceType: INSTANCE
+      Targets:
+        - Key: !Sub "tag:${MaintenanceWindowTargetTag}"
+          Values:
+            - "Dev"
+
+  MaintenanceWindowTask:
+    Type: AWS::SSM::MaintenanceWindowTask
+    Properties:
+      MaxErrors: '0'
+      Priority: 1
+      MaxConcurrency: '50'
+      Targets:
+        - Key: WindowTargetIds
+          Values:
+            - !Ref MaintenanceWindowTarget
+      TaskArn: AWS-RunPatchBaseline
+      TaskType: RUN_COMMAND
+      WindowId: !Ref MaintenanceWindow
+      TaskInvocationParameters:
+        MaintenanceWindowRunCommandParameters:
+          TimeoutSeconds: 600
+          Parameters:
+            Operation:
+              - Install

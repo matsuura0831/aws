@@ -1,0 +1,250 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Configure an Audit S3 bucket for the Log Archive account.
+
+Parameters:
+  SSEAlgorithm:
+    Type: 'String'
+    Default: 'AES256'
+    Description: S3 bucket SSE Algorithm.
+    AllowedValues:
+    - 'AES256'
+  ManagedResourcePrefix:
+    Type: 'String'
+    Description: 'Prefix for the managed resources'
+    Default: "aws-organizations"
+  RetentionDays:
+    Type: String
+    Description: 'No of Days to retain the logs, after which it will be permanently deleted'
+    Default: 365
+  TransitionToGlacier:
+    Type: String
+    Description: 'Do you wish to transition the logs to Glacier before permanently deleting?'
+    Default: 'No'
+    AllowedValues:
+    - 'Yes'
+    - 'No'
+  TransitionDays:
+    Type: String
+    Description: 'No of Days to transition the data from S3 to Glacier'
+    Default: 90
+  AWSLogsS3KeyPrefix:
+    Type: 'String'
+    Description: 'Organization ID to use as the S3 Key prefix for storing the audit logs'
+
+Mappings:
+  # https://docs.aws.amazon.com/ja_jp/elasticloadbalancing/latest/classic/enable-access-logs.html
+  ELBLogger:
+    us-east-1:
+      AccountID: "127311923021"
+    us-west-2:
+      AccountID: "797873946194"
+    us-west-1:
+      AccountID: "027434742980"
+    eu-west-1:
+      AccountID: "156460612806"
+    ap-southeast-1:
+      AccountID: "114774131450"
+    ap-southeast-2:
+      AccountID: "783225319266"
+    ap-northeast-1:
+      AccountID: "582318560864"
+    sa-east-1:
+      AccountID: "507241528517"
+    us-gov-west-1:
+      AccountID: "048591011584"
+
+Conditions:
+  MoveToGlacier: !Equals
+    - !Ref TransitionToGlacier
+    - 'Yes'
+
+Resources:
+  # Create S3 Server Access Logging bucket
+  S3LoggingBucket:
+    DeletionPolicy: Retain
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ManagedResourcePrefix}-s3-access-logs-${AWS::AccountId}-${AWS::Region}
+      AccessControl: LogDeliveryWrite
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: !Ref SSEAlgorithm
+  # Create S3 Audit bucket
+  S3AuditBucket:
+    DeletionPolicy: Retain
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ManagedResourcePrefix}-logs-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3LoggingBucket
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: !Ref SSEAlgorithm
+      LifecycleConfiguration:
+        Rules:
+        - !If
+          - MoveToGlacier
+          - Id: RetentionRule
+            Status: Enabled
+            ExpirationInDays: !Ref RetentionDays
+            NoncurrentVersionExpirationInDays: !Ref RetentionDays
+            Transitions:
+                - TransitionInDays: !Ref TransitionDays
+                  StorageClass: Glacier
+            NoncurrentVersionTransitions:
+                - TransitionInDays: !Ref TransitionDays
+                  StorageClass: Glacier
+          - Id: RetentionRule
+            Status: Enabled
+            ExpirationInDays: !Ref RetentionDays
+            NoncurrentVersionExpirationInDays: !Ref RetentionDays
+  # Create Bucket Policy for S3 Audit bucket
+  S3AuditBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3AuditBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AWSBucketPermissionsCheck
+            Effect: Allow
+            Principal:
+              Service:
+                - cloudtrail.amazonaws.com
+                - config.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource:
+              - !Sub "arn:aws:s3:::${S3AuditBucket}"
+          - Sid: AWSBucketDelivery
+            Effect: Allow
+            Principal:
+              Service:
+                - cloudtrail.amazonaws.com
+                - config.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "arn:aws:s3:::${S3AuditBucket}/${AWSLogsS3KeyPrefix}/AWSLogs/*/*"
+
+  # Create S3 LoadBalancer bucket
+  S3LoadBalancerBucket:
+    DeletionPolicy: Retain
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ManagedResourcePrefix}-shared-web-elb-${AWS::AccountId}
+      AccessControl: LogDeliveryWrite
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: !Ref SSEAlgorithm
+      LifecycleConfiguration:
+        Rules:
+        - !If
+          - MoveToGlacier
+          - Id: RetentionRule
+            Status: Enabled
+            ExpirationInDays: !Ref RetentionDays
+            NoncurrentVersionExpirationInDays: !Ref RetentionDays
+            Transitions:
+                - TransitionInDays: !Ref TransitionDays
+                  StorageClass: Glacier
+            NoncurrentVersionTransitions:
+                - TransitionInDays: !Ref TransitionDays
+                  StorageClass: Glacier
+          - Id: RetentionRule
+            Status: Enabled
+            ExpirationInDays: !Ref RetentionDays
+            NoncurrentVersionExpirationInDays: !Ref RetentionDays
+  # Create Bucket Policy for S3 LoadBalancer bucket
+  S3LoadBalancerBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3LoadBalancerBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AWSBucketDelivery
+            Effect: Allow
+            Principal:
+              AWS: !FindInMap [ "ELBLogger", { "Ref": "AWS::Region" }, "AccountID" ]
+            Action: s3:PutObject
+            Resource: !Sub "arn:aws:s3:::${S3LoadBalancerBucket}/AWSLogs/*/*"
+
+  # Create S3 LoadBalancer bucket
+  S3ProxyLoadBalancerBucket:
+    DeletionPolicy: Retain
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ManagedResourcePrefix}-shared-proxy-elb-${AWS::AccountId}
+      AccessControl: LogDeliveryWrite
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: !Ref SSEAlgorithm
+      LifecycleConfiguration:
+        Rules:
+        - !If
+          - MoveToGlacier
+          - Id: RetentionRule
+            Status: Enabled
+            ExpirationInDays: !Ref RetentionDays
+            NoncurrentVersionExpirationInDays: !Ref RetentionDays
+            Transitions:
+                - TransitionInDays: !Ref TransitionDays
+                  StorageClass: Glacier
+            NoncurrentVersionTransitions:
+                - TransitionInDays: !Ref TransitionDays
+                  StorageClass: Glacier
+          - Id: RetentionRule
+            Status: Enabled
+            ExpirationInDays: !Ref RetentionDays
+            NoncurrentVersionExpirationInDays: !Ref RetentionDays
+  # Create Bucket Policy for S3 LoadBalancer bucket
+  S3ProxyLoadBalancerBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3ProxyLoadBalancerBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement: 
+          - Sid: AWSLogDeliveryWrite
+            Effect: Allow
+            Principal:
+              Service: "delivery.logs.amazonaws.com"
+            Action: "s3:PutObject"
+            Resource: !Sub "arn:aws:s3:::${S3ProxyLoadBalancerBucket}/AWSLogs/*/*"
+            Condition: 
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+          - Sid: AWSLogDeliveryAclCheck
+            Effect: Allow
+            Principal:
+              Service: "delivery.logs.amazonaws.com"
+            Action: "s3:GetBucketAcl"
+            Resource: !Sub "arn:aws:s3:::${S3ProxyLoadBalancerBucket}"
+
+Outputs:
+  BucketName:
+    Description: Audit S3 bucket name
+    Value: !Ref S3AuditBucket
+  LoggingBucketName:
+    Description: S3 Access Logging Bucket name
+    Value: !Ref S3LoggingBucket
+  AuditLogsS3KeyPrefix:
+    Description: S3 Key prefix for storing the audit logs
+    Value: !Ref AWSLogsS3KeyPrefix
+  LoadBalancerBucketName:
+    Description: Loadbalancer S3 bucket name
+    Value: !Ref S3LoadBalancerBucket
+  ProxyLoadBalancerBucketName:
+    Description: Proxy Loadbalancer S3 bucket name
+    Value: !Ref S3ProxyLoadBalancerBucket
+

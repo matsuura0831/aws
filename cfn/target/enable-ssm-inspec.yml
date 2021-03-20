@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Enable SSM RunInspecChecks
+
+Parameters:
+  ManagedResourcePrefix:
+    Type: 'String'
+    Description: 'Prefix for the managed resources'
+    Default: "aws-organizations"
+  LogsRetentionInDays:
+    Description: 'Specifies the number of days you want to retain notification forwarding log events in the Lambda log group.'
+    Type: Number
+    Default: 14
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+
+Resources:
+  AssociationRunInspecChecksAntivirus:
+    Type: AWS::SSM::Association
+    Properties:
+      AssociationName: !Sub "${ManagedResourcePrefix}-Inspec-Antivirus-Association"
+      Name: 'AWS-RunInspecChecks'
+      ScheduleExpression: "cron(0 0/2 ? * * *)" # Per2h
+      Parameters:
+        sourceType: ['GitHub']
+        sourceInfo: ['{"owner": "matsuura0831", "repository": "aws", "path": "inspec/antivirus.rb"}']
+      Targets:
+        - Key: InstanceIds
+          Values:
+            - "*"
+
+  CheckComplianceLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub ${ManagedResourcePrefix}-CheckComplianceLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'lambda.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AWSConfigRulesExecutionRole'
+      - 'arn:aws:iam::aws:policy/CloudWatchLogsFullAccess'
+      - 'arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess'
+
+  CheckComplianceLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub ${ManagedResourcePrefix}-CheckCompliance
+      Description: Check compliance status and push Config.
+      Code:
+        ZipFile:
+          !Sub |
+            import json
+            import boto3
+
+            APPLICABLE_RESOURCES = ["AWS::EC2::Instance"]
+
+            def evaluate(configuration_item):
+                if configuration_item["resourceType"] not in APPLICABLE_RESOURCES:
+                    return {
+                        "compliance_type": "NOT_APPLICABLE",
+                        "annotation": "The rule doesn't apply to resources of type " +
+                        configuration_item["resourceType"] + "."
+                    }
+                if configuration_item['configurationItemStatus'] == "ResourceDeleted":
+                    return {
+                        "compliance_type": "NOT_APPLICABLE",
+                        "annotation": "The configurationItem was deleted and therefore cannot be validated"
+                    }
+
+                ssm = boto3.client('ssm')
+                compliances = ssm.list_compliance_items(
+                    ResourceIds=[configuration_item['resourceId']],
+                    Filters=[{'Key': 'Status', 'Values': ['COMPLIANT'], 'Type': 'NOT_EQUAL'}])
+                items = compliances['ComplianceItems']
+
+                if len(items) > 0:
+                    return {
+                        "compliance_type": "NON_COMPLIANT",
+                        "annotation": items[0]['Title']
+                    }
+                return {
+                    "compliance_type": "COMPLIANT",
+                    "annotation": "This resource is compliant with the rule."
+                }
+
+            def lambda_handler(event, context):
+                invoking_event = json.loads(event["invokingEvent"])
+                configuration_item = invoking_event["configurationItem"]
+                result_token = event['resultToken']
+
+                evaluation = evaluate(configuration_item)
+                assert evaluation['compliance_type'] in ['COMPLIANT', 'NON_COMPLIANT', 'NOT_APPLICABLE']
+
+                config = boto3.client("config")
+                config.put_evaluations(
+                    Evaluations=[
+                        {
+                            "ComplianceResourceType": configuration_item["resourceType"],
+                            "ComplianceResourceId": configuration_item["resourceId"],
+                            "ComplianceType": evaluation["compliance_type"],
+                            "Annotation": evaluation["annotation"],
+                            "OrderingTimestamp": configuration_item["configurationItemCaptureTime"]
+                        },
+                    ],
+                    ResultToken=result_token
+                )
+      Handler: 'index.lambda_handler'
+      MemorySize: 128
+      Role: !GetAtt CheckComplianceLambdaRole.Arn
+      Runtime: 'python3.6'
+      Timeout: 60
+
+  CheckComplianceLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      Principal: config.amazonaws.com
+      FunctionName: !GetAtt CheckComplianceLambda.Arn
+
+  CheckComplianceRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${ManagedResourcePrefix}-CUSTOM_EC2_MANAGEDINSTANCE_ANY_COMPLIANCE_STATUS_CHECK"
+      Description: Check wheather any managed instance with NON_COMPLIANCE status.
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::Instance
+      Source:
+        Owner: CUSTOM_LAMBDA
+        SourceIdentifier: !GetAtt CheckComplianceLambda.Arn
+        SourceDetails:
+          - EventSource: aws.config
+            MessageType: ConfigurationItemChangeNotification
+
+  CheckComplianceGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${CheckComplianceLambda}'
+      RetentionInDays: !Ref LogsRetentionInDays
+
+Outputs:
+  Lambda:
+    Value: !GetAtt CheckComplianceLambda.Arn

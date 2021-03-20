@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Configure Cloudwatch LogGroup, Metrics and Alert, send notifications to local SNS Topic
+Parameters:
+  ManagedResourcePrefix:
+    Type: 'String'
+    Description: 'Prefix for the managed resources'
+    Default: 'aws-organizations'
+  TopicName:
+    Type: String
+    Description: Local Notification SNS Topic Name.
+    Default: 'aws-organizations-SecurityNotifications'
+  LogsRetentionInDays:
+    Description: 'Specifies the number of days you want to retain notification forwarding log events in the Lambda log group.'
+    Type: Number
+    Default: 90
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+  LogPrefixAmazonLinux2:
+    Type: String
+    Default: '/syslog/amazonlinux2'
+
+Resources:
+  AmazonLinux2SyslogMessages:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '${LogPrefixAmazonLinux2}/var/log/messages'
+      RetentionInDays: !Ref LogsRetentionInDays
+  AmazonLinux2SyslogSecure:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '${LogPrefixAmazonLinux2}/var/log/secure'
+      RetentionInDays: !Ref LogsRetentionInDays
+  AmazonLinux2SyslogCloudInit:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '${LogPrefixAmazonLinux2}/var/log/cloud-init.log'
+      RetentionInDays: !Ref LogsRetentionInDays
+  AmazonLinux2SyslogCron:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '${LogPrefixAmazonLinux2}/var/log/cron'
+      RetentionInDays: !Ref LogsRetentionInDays
+  AmazonLinux2SyslogYum:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '${LogPrefixAmazonLinux2}/var/log/yum.log'
+      RetentionInDays: !Ref LogsRetentionInDays
+  AmazonLinux2SyslogSSM:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '${LogPrefixAmazonLinux2}/var/log/amazon/ssm/amazon-ssm-agent.log'
+      RetentionInDays: !Ref LogsRetentionInDays
+  AmazonLinux2SyslogScriptEc2User:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '${LogPrefixAmazonLinux2}/var/log/script/ec2-user.log'
+      RetentionInDays: !Ref LogsRetentionInDays
+  AmazonLinux2SyslogScriptOthers:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '${LogPrefixAmazonLinux2}/var/log/script/others.log'
+      RetentionInDays: !Ref LogsRetentionInDays
+  AmazonLinux2SepSyslog:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '${LogPrefixAmazonLinux2}/var/symantec/Logs/syslog.log'
+      RetentionInDays: !Ref LogsRetentionInDays
+
+#  SymantecEndpointProtectionAmazonLinux2Filter:
+#    Type: AWS::Logs::MetricFilter
+#    Properties:
+#      LogGroupName: !Ref AmazonLinux2SyslogMessages
+#      FilterPattern: '"rtvscand: Threat Found!Threat:"'
+#      MetricTransformations:
+#        - MetricValue: "1"
+#          MetricNamespace: "AntiVirus/SymantecEndpointProtection"
+#          MetricName: Threat
+#  AntiVirusSymantecEndpointProtectionAlerm:
+#    Type: AWS::CloudWatch::Alarm
+#    Properties:
+#      Namespace: "AntiVirus/SymantecEndpointProtection"
+#      MetricName: Threat
+#      Statistic: Average
+#      ComparisonOperator: GreaterThanThreshold
+#      Threshold: 0
+#      Period: 600
+#      EvaluationPeriods: 1
+#      AlarmActions:
+#        - !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${TopicName}"
+#      AlarmDescription: "SymantecEndpointProtection threat alarm"
+#      AlarmName: !Sub "${ManagedResourcePrefix}-DetectVirus"
+

@@ -1,0 +1,20 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Configure AWS Config
+
+Parameters:
+  ManagedResourcePrefix:
+    Type: 'String'
+    Description: 'Prefix for the managed resources'
+    Default: "aws-organizations"
+
+Resources:
+  AssociationGatherSoftwareInventory:
+    Type: AWS::SSM::Association
+    Properties:
+      AssociationName: !Sub "${ManagedResourcePrefix}-Inventory-Association"
+      Name: 'AWS-GatherSoftwareInventory'
+      ScheduleExpression: "rate(30 minutes)"
+      Targets:
+        - Key: InstanceIds
+          Values:
+            - "*"

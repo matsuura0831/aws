@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Configure AWS Config
+
+Parameters:
+  ManagedResourcePrefix:
+    Type: 'String'
+    Description: 'Prefix for the managed resources'
+    Default: "aws-organizations"
+
+  IncludeGlobalResourceTypes:
+    Type: String
+    Default: 'true'
+    Description: Indicates whether AWS Config records all supported global resource types.
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  Frequency:
+    Type: String
+    Default: '24hours'
+    Description: The frequency with which AWS Config delivers configuration snapshots.
+    AllowedValues:
+      - 1hour
+      - 3hours
+      - 6hours
+      - 12hours
+      - 24hours
+
+  AllConfigTopicName:
+    Type: String
+    Default: 'AllConfigNotifications'
+    Description: All Configuration Notification SNS Topic in Security Account that AWS Config delivers notifications to.
+
+  SecurityAccountId:
+    Type: 'String'
+    Description: AWS Account Id of the Security account.
+
+  AuditBucketName:
+    Type: String
+    Description: Audit Bucket name from the Log Archive Account
+
+  AWSLogsS3KeyPrefix:
+    Type: 'String'
+    Description: 'Organization ID to use as the S3 Key prefix for storing the audit logs'
+
+Mappings:
+  Settings:
+    FrequencyMap:
+      1hour   : One_Hour
+      3hours  : Three_Hours
+      6hours  : Six_Hours
+      12hours : Twelve_Hours
+      24hours : TwentyFour_Hours
+
+Resources:
+  ConfigRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    Properties:
+      Name: !Sub ${ManagedResourcePrefix}-ConfigRecorder
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/${ManagedResourcePrefix}-ConfigRecorderRole
+      RecordingGroup:
+        AllSupported: true
+        IncludeGlobalResourceTypes: !Ref IncludeGlobalResourceTypes
+
+  ConfigDeliveryChannel:
+    Type: AWS::Config::DeliveryChannel
+    Properties:
+      Name: !Sub ${ManagedResourcePrefix}-ConfigDeliveryChannel
+      ConfigSnapshotDeliveryProperties:
+        DeliveryFrequency: !FindInMap
+          - Settings
+          - FrequencyMap
+          - !Ref Frequency
+      S3BucketName: !Ref AuditBucketName
+      S3KeyPrefix: !Ref AWSLogsS3KeyPrefix
+      SnsTopicARN: !Sub arn:aws:sns:${AWS::Region}:${SecurityAccountId}:${AllConfigTopicName}
+
+  AuthorizerTokyo:
+    Type: "AWS::Config::AggregationAuthorization"
+    Properties:
+      AuthorizedAccountId: !Ref SecurityAccountId
+      AuthorizedAwsRegion: ap-northeast-1
+
+Outputs:
+  ConfigRecorder:
+    Description: Config Recorder
+    Value: !Ref ConfigRecorder
+  ConfigDeliveryChannel:
+    Description: Config Delivery Channel
+    Value: !Ref ConfigDeliveryChannel
