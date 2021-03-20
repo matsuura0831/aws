@@ -1,0 +1,59 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  billing-check
+
+  Sample SAM Template for billing-check
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+
+Parameters:
+  slackWebhookUrl:
+    Type: String
+  slackChannel:
+    Type: String
+
+Resources:
+  BillingCheckFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: app/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Events:
+        BillingCheckInterval:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 15 * * ? *) # JST 00:00 every day
+      Environment:
+        Variables:
+          SLACK_WEBHOOK_URL: !Ref slackWebhookUrl
+          SLACK_CHANNEL: !Ref slackChannel
+      Policies:
+        - Statement:
+          - Sid: CEGetCostAndUsage
+            Effect: Allow
+            Action:
+              - ce:GetCostAndUsage
+            Resource: '*'
+
+  BillingCheckLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${BillingCheckFunction}
+      RetentionInDays: 14
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  BillingCheckFunction:
+    Description: "Billing Check Lambda Function ARN"
+    Value: !GetAtt BillingCheckFunction.Arn
+  BillingCheckFunctionIamRole:
+    Description: "Implicit IAM Role created for Billing Check function"
+    Value: !GetAtt BillingCheckFunctionRole.Arn
+
